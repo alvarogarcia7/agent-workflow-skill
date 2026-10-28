@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Fake `glab` for tests. Only `glab api [-X METHOD] <path>` is supported. Behaviour comes from files in $FAKE_GLAB_DIR:
+#   mr.json                 reply to GET projects/*/merge_requests/<iid>
+#   pipelines.json          reply to GET .../merge_requests/<iid>/pipelines
+#   pipelines.err           if present: printed instead (exit 1), e.g. a 429 message
+#   mr.err                  same for the MR call
+#   jobs-<id>.json          reply to GET .../pipelines/<id>/jobs   (default: [])
+#   post.out / post.rc      reply and exit code of POST .../merge_requests/<iid>/pipelines
+# Every POST increments $FAKE_GLAB_DIR/post.count.
+d="${FAKE_GLAB_DIR:?}"; method=GET
+[ "$1" = api ] || { echo "fake glab: unsupported: $*" >&2; exit 2; }; shift
+while [ $# -gt 0 ]; do case "$1" in -X) method="$2"; shift 2;; *) path="$1"; shift;; esac; done
+path="${path%%\?*}"
+case "$method:$path" in
+  POST:*/merge_requests/*/pipelines)
+    echo $(( $(cat "$d/post.count" 2>/dev/null || echo 0) + 1 )) > "$d/post.count"
+    cat "$d/post.out"; exit "$(cat "$d/post.rc" 2>/dev/null || echo 0)";;
+  GET:*/merge_requests/*/pipelines)
+    [ -f "$d/pipelines.err" ] && { cat "$d/pipelines.err"; exit 1; }; cat "$d/pipelines.json";;
+  GET:*/merge_requests/*)
+    [ -f "$d/mr.err" ] && { cat "$d/mr.err"; exit 1; }; cat "$d/mr.json";;
+  GET:*/pipelines/*/jobs)
+    id="${path%/jobs}"; id="${id##*/}"; if [ -f "$d/jobs-$id.json" ]; then cat "$d/jobs-$id.json"; else echo '[]'; fi;;
+  *) echo "fake glab: unhandled $method $path" >&2; exit 2;;
+esac
