@@ -1,117 +1,91 @@
 ---
 name: multi-agent-workflow
-description: Run a large backlog with one coordinator plus parallel agents and subagents. Covers the Backlog.md CLI/MCP task loop, design-consult agents, decision log, file ownership and worktrees, local verification, a push and CI flow that never overloads CI, finalization with evidence, failing tests as child subtasks, and an optional design-parity loop. Use it when asked to orchestrate several agents on a milestone, to brief or supervise agents, to push or finalize tasks, or to run the parity loop.
+description: Coordinate one coordinator plus parallel Claude Code agents/subagents on a Backlog.md backlog; briefing and supervising agents, design consults, decision log, file ownership and worktrees, local verification, CI-safe pushing (one pipeline at a time), evidence-based finalization. Use when the user asks to orchestrate or parallelize agents over backlog tasks or a milestone, or in a repository that has .agent-workflow.env / WORKFLOW.md. Not for a single ordinary git push or one-off task.
 ---
 
 # Multi-agent workflow
 
-Implement a big backlog with one coordinator ("agent A") and several parallel agents. Follow it when you coordinate, and when you are an agent that was briefed with it. It works for any codebase: the project-specific parts (verification commands, ports, test tools) live in your **brief** and in a short `WORKFLOW.md` in the repository, not here.
+One coordinator ("agent A") and several parallel agents implement a big backlog. Follow it as coordinator or as a briefed agent. Project specifics (verification commands, ports, test tools) live in your **brief** and in `WORKFLOW.md` (template: `templates/WORKFLOW.md`).
 
-## 0. Ground rules (always)
+**Requirements and assumptions**: Claude Code (Agent/SendMessage tools), Backlog.md >= 1.x (CLI or MCP), git worktrees, GitLab MR pipelines for the CI loop. Without Backlog.md, map the task commands to your tracker in `WORKFLOW.md`; without GitLab, see `references/ci-github.md`. Scripts: `bash`, `git`, `python3`, `flock` (macOS: `brew install flock`, or mkdir fallback).
 
-1. **The backlog is the source of truth for tasks.** With [Backlog.md](https://github.com/MrLesk/Backlog.md): run `backlog instructions overview` once per conversation; read `backlog instructions task-creation`, `task-execution` and `task-finalization` before creating tasks, starting/changing status, or ticking criteria. **Never edit the task files directly: use the `backlog` CLI (or its MCP tools)** so metadata, links and history stay consistent. Validate the backlog before you push.
-2. **Do not touch tasks that someone else started or owns.** List them for the coordinator instead.
-3. **Do not ask the user product/design questions** while working a milestone loop. Settle ambiguities yourself (section 3), log the decision, and flag it in your report.
-4. **A parent task can only be finished when all its children are Done.** Failing tests, screenshot/design differences, user-reported bugs and parity gaps become **child subtasks** of the original task (`backlog task create "<title>" -p <parent-id> -m <milestone> -d "<what is wrong vs expected>" --ac "<criterion>"`). Move an already-Done original back to `In Progress` with a note (`--append-notes`) until its children are Done.
-5. **Every user-facing task gets a happy-path end-to-end walkthrough** (section 5), if the project records them.
-6. **Report faithfully.** Failing tests, skipped steps and unverified claims are stated as such. "Done" needs evidence: spec/test names, a green pipeline id.
+## 0. Ground rules
 
-**Helper scripts** (in `scripts/`; configuration in `scripts/env.example`): `safe-push.sh`, `ci-trigger.sh`, `heavy.sh`, `keep-both.py`. Copy them to a path every agent can read; they keep shared state (locks, `ci-status.json`, logs, queue file) in `STATE_DIR`.
+1. **The backlog is the source of truth.** Run `backlog instructions overview` once per conversation; read `backlog instructions task-creation`, `task-execution`, `task-finalization` before creating tasks, changing status or ticking criteria. **Never edit task files directly: use the `backlog` CLI (or MCP).** Before a push run `backlog doctor` (and the validator `WORKFLOW.md` names, if any).
+2. Do not touch tasks someone else started or owns; list them for the coordinator.
+3. Do not ask the user product/design questions in a milestone loop: decide (section 3), log it, flag it in the report.
+4. **A parent is finished only when all children are Done.** Failing tests, design differences, bug reports become **child subtasks** (`backlog task create "<title>" -p <parent> -m <milestone> -d "<wrong vs expected>" --ac "<criterion>"`). Move a Done original back to `In Progress` with `--append-notes` until its children are Done.
+5. Every user-facing task gets a happy-path walkthrough (section 5) if the project records them.
+6. **Report faithfully.** Failing tests, skipped steps and unverified claims are stated as such. "Done" needs evidence: test names, a green pipeline id.
+
+Scripts (`scripts/`, config `scripts/env.example`, shared state in `STATE_DIR`): `safe-push.sh`, `ci-trigger.sh`, `heavy.sh`, `keep-both.py`, `lib.sh`.
 
 ## 1. Roles
 
-| Role                      | Does                                                                                                                 | Typical model     |
-| ------------------------- | -------------------------------------------------------------------------------------------------------------------- | ----------------- |
-| Coordinator (agent A)     | Owns the queue, design decisions, integration pushes, finalization, user communication                               | the session model |
-| Design consultant         | Read-only agent that reads the decision log, decision records, tasks and code, and returns numbered decisions + a work split | Opus              |
-| Backend/API worker        | Schema, entities, services, controllers, API request files, server tests                                             | Haiku             |
-| Frontend worker           | Screens, components, UI specs, walkthroughs                                                                          | Haiku             |
-| Integrations/audit worker | Third-party integrations, audit/logging, mocks on fixed ports                                                        | Opus              |
-| Parity workers            | Design parity per screen shard, measurement                                                                          | Haiku             |
-| CI agent                  | Runs `ci-trigger.sh`, writes failure reports                                                                         | Haiku             |
+| Role                  | Does                                                                 | Model                  |
+| --------------------- | -------------------------------------------------------------------- | ---------------------- |
+| Coordinator           | Queue, decisions, integration pushes, finalization, user reports     | the session model      |
+| Design consultant     | Read-only: returns numbered decisions + work split                   | strong (e.g. Opus)     |
+| Backend / frontend / parity workers | Well-specified tasks with strong verification          | fast (e.g. Haiku)      |
+| Integrations / audit worker | Third-party integrations, mocks, anything ambiguous            | strong                 |
+| CI agent              | Runs `ci-trigger.sh`, writes `ci-report-<pipeline>.md`               | fast                   |
 
-Pick models by risk: cheap models for well-specified tasks with strong verification, a stronger model for design consults, integrations and anything ambiguous. Spawn agents with the Agent tool. **Brief them like peers** (template: `templates/agent-brief.md`): goal, what is already decided (decision ids), files they own and must not edit, the verification recipe, push rules, ports, how to report. A brief is the only context they get. Resume an idle agent with SendMessage (a new Agent call loses its context). Run independent agents in parallel; do not duplicate an agent's work yourself.
+Brief agents like peers (`templates/agent-brief.md`): goal, decisions (ids), owned and forbidden files, verification recipe, push rules, ports, report format. The brief is all they get. Resume idle agents with SendMessage; do not duplicate their work.
 
 ## 2. Work loop per task
 
-1. Search the backlog (`backlog task search`, `task view <id> --plain`); check remote branches and the decision log for an existing implementation.
-2. If the design is ambiguous or crosses subsystems, run a **design consult** first (section 3).
-3. Claim the task: `backlog task edit <id> -a @agent-x -s "In Progress"`. Implement within your owned files.
-4. Write the tests that prove the acceptance criteria: unit/integration, UI/end-to-end, request files for new endpoints, a walkthrough for UI tasks.
-5. Verify **locally** (section 6). Commit with the task id in the message (`TASK-14.05: Add case to plan`).
-6. Push (section 7). Immediately start the next task; do not wait for CI.
-7. When a pipeline that contains your commits is green: tick the criteria and Definition of Done with evidence, write the final summary, set `Done` (section 8). Reword criteria that decisions superseded, with the reason in the notes.
+1. Search: `backlog search "<query>" --plain`, `backlog task view <id> --plain`; check remote branches and the decision log.
+2. Ambiguous or cross-cutting: design consult first (section 3).
+3. Claim only what the queue assigns: `backlog task edit <id> -a @agent-x -s "In Progress"`, then re-read the task. Implement in your files.
+4. Write tests proving the criteria (unit, UI/e2e, request files, walkthrough).
+5. Verify locally (section 6). Commit with the task id.
+6. Push (section 7), start the next task, do not wait for CI.
+7. When a green pipeline contains your commits: finalize (section 8). Before stopping, leave a handover (`templates/handover.md`).
 
-## 3. Decisions (decision log)
+## 3. Decisions
 
-- Keep one append-only log (`DECISIONS.md`). Entry: `**D-nn · task · decider** — decision. *Why:* reason. *Alternatives:* …` (template: `templates/decision-entry.md`). Give each agent its own number block to avoid collisions; on a merge conflict in the log keep both sides (`scripts/keep-both.py DECISIONS.md`).
-- **Design consult**: spawn an Opus agent, read-only ("do not edit files, do not run servers"), with the tasks, existing code and decision records. Ask for concrete decisions (data model, endpoints, rules, edge cases), the contradictions between task criteria, and a split into streams with file ownership. Record the answer in the log, then brief the workers.
-- A conflict with a team decision record (an ADR) is reconciled in a new log entry ("X is working state; the commit to Y is a later step") and flagged to its owner. Do not silently contradict it.
+- One append-only log (`DECISIONS.md`), entry format `templates/decision-entry.md`, one id block per agent. On merge conflicts run `scripts/keep-both.py DECISIONS.md` (reports duplicate ids, non-zero if markers remain).
+- **Design consult**: strong model, read-only, brief `templates/design-consult-brief.md` (output: decisions, contradictions, streams with ownership, risks). Log the answer, then brief workers.
+- A conflict with a team decision record is reconciled in a new log entry and flagged to its owner, never silently contradicted.
 
-## 4. Splitting work between agents
+## 4. Splitting work
 
-- **One owner per file group.** Shared files get a single mount line, rebased carefully. Schema/migration files are edited only by the agent doing "Step 0", pushed alone, then frozen.
-- **Contract first**: the backend agent pushes migrations, endpoints, request files and the typed client early; the frontend agent builds on them.
-- **Each agent has its own git worktree** (`git worktree add <path>/agent-x -b agent-x origin/<branch>`), its **own ports**, and kills only its own servers **by PID**. Never `pkill -f`: it matches your own shell's command line.
-- A stale running backend is a classic trap ("not found" for an endpoint that exists in code): restart your server after pulling backend changes.
-- Idle agents get real work: verification runs, missing tests, finalization prep, review.
+- One owner per file group; schema/migrations edited by one agent ("Step 0"), pushed alone, then frozen. Contract first (migrations, endpoints, typed client), UI builds on it.
+- Each agent: own worktree (`git worktree add <path>/agent-x -b agent-x origin/<branch>`), own ports, kills only its own servers **by PID** (never `pkill -f`). Share dependency installs across worktrees.
+- Restart your server after pulling backend changes. Give idle agents real work.
 
-## 5. End-to-end walkthroughs (optional, recommended for UI work)
+## 5. Walkthroughs (optional, for UI work)
 
-One happy-path walkthrough per user-facing task, recorded as a video/test with captions, kept next to a short human description (release notes). Rules that avoid flakiness: wait for the screen before interacting; never tap an element right after navigation without waiting; use retrying helpers for elements that re-render; give each walkthrough its own workspace/data.
+One happy-path walkthrough per user-facing task, recorded as video/test with captions (needs a test runner that records video). Wait for the screen before interacting, use retrying helpers, use a private workspace per walkthrough.
 
 ## 6. Local verification (before every push)
 
-Define the recipe once in `WORKFLOW.md` and put it in every brief. Shape:
+Recipe in `WORKFLOW.md`: CI-exact checks in CI order (formatter, linter, type check, static analysis such as SpotBugs, ESLint, mypy), tests for what you touched, UI/e2e on your own ports via `scripts/heavy.sh <cmd>` (max 2 workers), private datasets for tests that write, serial tests for fixed-port mocks. Set every base-URL variable, plus CORS/frontend URLs on non-default ports; the e2e profile raises rate limits. Clean test output afterwards. More: `references/lessons.md`.
 
-1. Build and static checks that CI runs (formatter check, linter, type check, static analysis such as SpotBugs), **in the same order and with the same flags as CI**.
-2. Unit and integration tests for what you touched; request files for new endpoints.
-3. UI/end-to-end tests for the area, on **your own ports**, through the limiter: `scripts/heavy.sh <command>` with at most 2 workers.
-4. Every test that creates or deletes data uses a **private workspace/dataset**; a shared seed dataset stays read-only.
-5. Fixed-port mocks (identity provider, git forge, issue tracker) keep their tests serial.
+## 7. Push and CI (one pipeline at a time)
 
-Shared-machine hygiene: run heavy commands only through `heavy.sh`; stop servers when idle; delete test outputs, videos, build output and screenshots after runs (disks fill); set every base-URL environment variable your test helpers use when running on non-default ports (a helper that defaults to another agent's port silently tests the wrong backend).
-
-## 7. Push and CI flow (one pipeline at a time)
-
-CI collapses when many agents push often: every push cancels the running pipeline and none completes. So:
-
-- **Push every locally verified commit immediately** with `scripts/safe-push.sh`: it takes a lock, rebases only if behind, and pushes with `-o ci.skip`, so the push starts **no** pipeline. Never plain `git push`, never force.
-- **One CI agent** runs `scripts/ci-trigger.sh` (exactly one instance): every few minutes, if no pipeline is active and the head is not covered by a **non-skipped** pipeline, it creates one pipeline for the head via the API, writes `ci-status.json`, and appends failures to `ci-failures.log`.
-- **Agents never poll the CI API** (it rate-limits with HTTP 429): read `ci-status.json` at most every 5 minutes, and check that your commit is in a green pipeline with `git merge-base --is-ancestor <commit> <last_pipeline.sha>` and `last_pipeline.status == success`.
-- A failed pipeline: the CI agent writes a report (failed job, tests, classification); the coordinator routes it to the owner. A failure that repeats on every attempt is a bug, not a flake.
-- **Batch integration**: when several agents hold local commits, the coordinator may merge their branches into one, resolve duplicates, run the full checks once, and push once.
-- Commits that only touch backlog/docs create "skipped" pipelines; they are not verification.
+- Push each verified commit with `scripts/safe-push.sh` (lock, clean-tree check, rebase if behind, `PUSH_OPTS` default `-o ci.skip`, `BRANCH` required). A rebased push is **not re-verified**; set `POST_REBASE_CHECK` for a quick check. Never plain `git push`, never force.
+- One CI agent runs `scripts/ci-trigger.sh`: at most one pipeline per MR head, writes `ci-status.json` (schema, merged-results caveat, permissions: `references/ci-gitlab.md`).
+- Agents never poll the CI API. Read `ci-status.json` at most every 5 minutes. **If `updated` is older than 3 intervals, or `error`/`trigger_error` persists, tell the coordinator: the CI loop is dead.**
+- Green means `last_pipeline.status == success` and your commit is an ancestor of `last_pipeline.mr_head` (or `sha`).
+- Failure: CI agent writes `templates/ci-report.md`; coordinator routes it. A repeating failure is a bug. Skipped pipelines are not verification.
+- Batch integration: the coordinator may merge branches, run full checks once, push once.
 
 ## 8. Finalization
 
-1. A green pipeline that contains the commits (see above).
-2. Per task, with the CLI: reword criteria superseded by decisions (`--acceptance-criteria` with the full list keeps checks for unchanged text), `--check-ac N`, `--check-dod N`, `--append-notes` with the evidence, `--final-summary`, `-s Done`.
-3. Parents last, only when every child reads Done. Re-validate the backlog.
-4. Never claim evidence for code that is not in a green pipeline: reopen the task instead. A finalization script that edits many tasks must run from the checkout you will commit from, support `--dry-run`, and be idempotent.
+1. Green pipeline containing the commits.
+2. Per task: reword superseded criteria (`--acceptance-criteria` replaces all criteria; matching trimmed text keeps checks; see `backlog task edit --help`), `--check-ac N`, `--check-dod N` (DoD indexes in `WORKFLOW.md`), `--append-notes` evidence, `--final-summary`, `-s Done`.
+3. Parents last, only when every child is Done. Run `backlog doctor`.
+4. **Verify agent reports** (test names exist, commit in the pipeline) before finalizing. Never claim evidence for code not in a green pipeline: reopen. Batch script: `templates/finalize.sh` (dry-run, idempotent, children check).
 
-## 9. Failing tests and bug reports → child subtasks
+## 9. Failing tests and bug reports
 
-For a failing test or a user-reported bug: open the screenshot/error context, describe what is on screen vs expected, classify it (test out of date / real regression / environment or port problem / load flake: flakes get no subtask), find the original task, create the child with the difference as the description and "the test passes and the difference is gone" as the criteria, reopen the original, fix, and mark the child Done with evidence.
+Open the screenshot/error, describe screen vs expected, classify (test out of date / regression / environment or port / load flake: no subtask), find the original task, create the child with the difference and "test passes, difference gone" as criteria, reopen the original, fix, close the child with evidence.
 
-## 10. Design-parity loop (optional)
+## 10. Coordinator checklist
 
-Goal: every screen reaches a target similarity (for example 95%: pixel + typography + layout, **data excluded**) against a design reference, measured by a script on a seeded dataset. Workers claim an unassigned open parity child of their screen shard, copy the design's actual CSS/DOM values (never approximate), keep every test id, re-measure through `heavy.sh`, and close the child with the measured evidence. Measurement changes must be principled and logged: data rows (list/table rows, activity entries, chart bars) are masked identically on both sides, and seed values are never tuned to the design. Findings go back into the child tasks' notes so any worker can pick them up cold.
-
-## 11. Coordinator checklist
-
-- Keep a queue file (priorities, owners, ports) in `STATE_DIR` and update it after each batch (`templates/queue.md`).
-- One instruction per message; confirm who is idle and give them work.
-- Watch machine load, disk and CI rate limits; kill stray pollers by PID; announce rule changes to all agents at once.
-- Decide quickly what is yours to decide; log it; report only what the user needs.
-- Never leave a claim in the backlog that the code and a green pipeline do not back.
-
-## Lessons learned (anti-patterns)
-
-- Many agents each polling CI in a loop caused 429s and blind spots: poll one file instead.
-- Parallel browser tests on a shared machine crash ("Target crashed"): cap concurrency with a limiter.
-- Tests that delete from a shared seed dataset flake when run in parallel: private datasets.
-- A "skipped" pipeline for the head made the trigger think CI had run: only non-skipped pipelines count.
-- A helper whose base URL defaults to another agent's port makes tests pass or fail for the wrong reason.
-- Hard-coded process matching (`pkill -f <name>`) can kill your own shell: kill by PID.
-- Superseded acceptance criteria left unticked block parents forever: reword them in the CLI with the reason.
+- Queue file in `STATE_DIR` (`templates/queue.md`); one instruction per message; keep agents busy; announce rule changes to all.
+- Watch load, disk, rate limits; stop idle agents; ask a silent agent once, then reassign and free its ports and worktree.
+- Cleanup after merge: `git worktree remove`, delete branches.
+- Report to the user: done tasks with pipeline ids, decisions taken (ids), failures and owners, blocked items. Nothing else.
+- Cost control, claim races, handover: `references/lessons.md`. Optional design-parity loop: `references/parity-loop.md`.
