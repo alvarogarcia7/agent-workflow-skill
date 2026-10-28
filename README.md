@@ -46,3 +46,8 @@ GitLab only out of the box. On GitHub Actions: (1) set `on:` to `workflow_dispat
 
 Extracted from a real multi-agent run (a full-stack web app, ~100 backlog tasks, six parallel agents).
 License: to be chosen by the repository owner. Add a `LICENSE` before publishing.
+
+
+## Phase pipeline
+
+`MULTI_AGENT_DEV_SKILL.md` describes the four-phase pipeline (Development → Review → Push → Comparison), each phase a Ralph Wiggum loop connected by FIFO mailboxes. Skills: `skills/mad-phase-1-development`, `mad-phase-2-review`, `mad-phase-3-push`, `mad-phase-4-comparison`; scripts in `skills/multi-agent-workflow/scripts/` (`mailbox.sh`, `ralph-loop.sh`, `insert-fix.sh`).

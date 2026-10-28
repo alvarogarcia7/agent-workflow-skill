@@ -9,3 +9,6 @@
 - `keep-both.py`: diff3/zdiff3 safe, blank line between sides, duplicate decision id report, non-zero exit on leftover markers.
 - References (GitLab, GitHub, parity loop, lessons), templates (WORKFLOW, finalize, handover, design consult, CI report).
 - Test suite with a fake `glab`.
+
+## Unreleased
+- Four phase skills and `MULTI_AGENT_DEV_SKILL.md`; `mailbox.sh`, `ralph-loop.sh`, `insert-fix.sh`.
