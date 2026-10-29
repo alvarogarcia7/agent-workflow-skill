@@ -12,11 +12,12 @@ One coordinator ("agent A") and several parallel agents implement a big backlog.
 ## 0. Ground rules
 
 1. **The backlog is the source of truth.** Run `backlog instructions overview` once per conversation; read `backlog instructions task-creation`, `task-execution`, `task-finalization` before creating tasks, changing status or ticking criteria. **Never edit task files directly: use the `backlog` CLI (or MCP).** Before a push run `backlog doctor` (and the validator `WORKFLOW.md` names, if any).
-2. Do not touch tasks someone else started or owns; list them for the coordinator.
-3. Do not ask the user product/design questions in a milestone loop: decide (section 3), log it, flag it in the report.
-4. **A parent is finished only when all children are Done.** Failing tests, design differences, bug reports become **child subtasks** (`backlog task create "<title>" -p <parent> -m <milestone> -d "<wrong vs expected>" --ac "<criterion>"`). Move a Done original back to `In Progress` with `--append-notes` until its children are Done.
-5. Every user-facing task gets a happy-path walkthrough (section 5) if the project records them.
-6. **Report faithfully.** Failing tests, skipped steps and unverified claims are stated as such. "Done" needs evidence: test names, a green pipeline id.
+2. **Every request becomes a task first.** Whenever the user (or anyone) asks for a new feature, a change, a bug fix or sends feedback, search the backlog (`backlog search`), then create or extend a task with the CLI **before any work starts**: a child of the closest existing task when it belongs to one (reopen a Done parent), otherwise a new task; with a description (wrong vs expected, or the goal), measurable acceptance criteria and the user's wording quoted. Tell the user the task id. Work that has no task is not done: it cannot be assigned, verified or finalized. User feedback and added requirements to a running task are added as acceptance criteria on that task (`--ac`) and sent to the agent working on it.
+3. Do not touch tasks someone else started or owns; list them for the coordinator (unless the user releases them).
+4. Do not ask the user product/design questions in a milestone loop: decide (section 3), log it, flag it in the report.
+5. **A parent is finished only when all children are Done.** Failing tests, design differences, bug reports become **child subtasks** (`backlog task create "<title>" -p <parent> -m <milestone> -d "<wrong vs expected>" --ac "<criterion>"`). Move a Done original back to `In Progress` with `--append-notes` until its children are Done.
+6. Every user-facing task gets a happy-path walkthrough (section 5) if the project records them.
+7. **Report faithfully.** Failing tests, skipped steps and unverified claims are stated as such. "Done" needs evidence: test names, a green pipeline id.
 
 Scripts (`scripts/`, config `scripts/env.example`, shared state in `STATE_DIR`): `safe-push.sh`, `ci-trigger.sh`, `heavy.sh`, `keep-both.py`, `lib.sh`.
 

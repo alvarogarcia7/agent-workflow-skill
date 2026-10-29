@@ -8,6 +8,8 @@ description: Phase 1 of the multi-agent development pipeline (Ralph Wiggum loop)
 Inbox: the backlog (TODO tasks) and the `rework` mailbox (tasks rejected by Phase 2). Outbox: `review`.
 Workers: several in parallel, each with its own worktree, branch and ports. Model: the strongest affordable, cheap models only with strong verification.
 
+**Intake rule**: every new request from the user (feature, change, bug, feedback) first becomes a backlog task (or a criterion on the task it extends), then goes into the TODO list; nothing is developed without a task.
+
 One iteration (fresh context, state on disk):
 
 1. **Take the next TODO**, mark it `In Progress`, **commit the backlog** by itself. Rework messages come first (they are older work that came back).

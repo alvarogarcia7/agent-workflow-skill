@@ -18,6 +18,9 @@ A backlog is developed by four loops that run side by side. Each loop is a **Ral
 
 Scripts: `skills/multi-agent-workflow/scripts/` (`mailbox.sh`, `ralph-loop.sh`, `insert-fix.sh`, `safe-push.sh`, `ci-trigger.sh`, `heavy.sh`). In the phase skills `scripts/x.sh` means that folder. The generic playbook (roles, decisions, briefs, CI, lessons) is `skills/multi-agent-workflow/SKILL.md`; the per-project settings live in the project's `WORKFLOW.md` (template in `templates/`).
 
+## Intake (before Phase 1)
+Every request from the user (new feature, change, bug report, feedback) becomes a backlog task first: search, then create a child of the closest task (reopen a Done parent) or a new task, quote the user, write measurable criteria, and tell the user the task id. A requirement added to a task in progress is added as a criterion and forwarded to its agent. Only tasks enter Phase 1.
+
 ## Phase 1 · Development
 1. Take the first unblocked TODO (rework messages first). Mark it **In Progress** and **commit the backlog change alone**.
 2. Develop with tests in the files you own.

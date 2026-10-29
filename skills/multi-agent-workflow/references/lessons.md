@@ -43,3 +43,17 @@ Numbered decisions; contradictions between criteria; streams with file ownership
 
 ## Finalization script
 `templates/finalize.sh`: `--dry-run`, idempotent, prints quoted commands, per-command failure message, children-Done check before parents. Run it from the checkout you will commit from.
+
+## Intake: every request becomes a task
+Feature requests, bug reports and feedback are logged in the backlog **before** work starts (child of the closest task, parent reopened; quote the user; measurable criteria) and the task id is given back to the user. A requirement added to a task already in progress is added as a criterion (`--ac`) and sent to the agent working on it. The user's agents cannot talk to the user: the coordinator asks the questions (one batch, with a recommended default) and logs each answer as a decision.
+
+## Lessons from long runs (CI, tests, credentials)
+- **Two base URLs.** A CI job that runs Playwright against a Vite dev server has `BASE_URL` = the SPA; helpers that register users through the API need their own variable (`API_BASE_URL`) set in the job, or they get HTML back (`Unexpected token '<'`).
+- **Test reports.** A pipeline's test-report tab shows only `artifacts:reports:junit`. Give every test run its own JUnit file (`PLAYWRIGHT_JUNIT_OUTPUT_FILE`) so a second run does not overwrite the first, and publish with a glob; check that the path really is written (a configured but never-written path shows nothing).
+- **Flaky publish step.** When tests pass and only the last API call (release creation) fails with 5xx, do not rerun the whole job: have the script exit with a distinct code (75) for temporary failures and retry in a shell loop (for example 20 x 60 s); make the call idempotent (look the release up when a retry answers 409).
+- **Credentials for CI.** Never copy a personal token into CI. Create a project access token with the smallest scope and role (for reading a repository: `read_repository`, Reporter) with an expiry, store it as a masked and hidden variable (`masked_and_hidden`), not protected when merge-request pipelines on unprotected branches need it, and document owner, scope and rotation date. Positive tests that need the secret skip with a clear message when it is absent, negative tests always run.
+- **Rename jobs with care.** Job names are used by status scripts, docs and finalization notes; rename, update the docs and expect old pipelines to keep the old names.
+- **A failed pipeline after a rename or journey change** is usually a spec reading removed UI or a stale build: rebuild the jar the e2e run uses after pulling backend changes before concluding a regression.
+- **Shell traps.** zsh does not word-split `$var`; run test loops with `bash -c`. Never use `pkill -f`/`pgrep -f` (they match your own shell); keep PIDs.
+- **Dirty main checkout.** If the coordinator's checkout holds the user's uncommitted edits, push coordinator commits from a separate worktree (cherry-pick, then `git reset --keep origin/<branch>` in the main checkout).
+
