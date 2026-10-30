@@ -1,0 +1,108 @@
+---
+name: tcms-agent-workflow
+description: How to develop Verdict TCMS backlog tasks with a coordinator plus parallel agents/subagents, the Backlog.md CLI/MCP, design-consult agents, journeys, local verification and the CI push flow. Use it when asked to work milestone tasks (ORCH-xxx), to brief or supervise agents, to push, to finalize tasks, or to run the design-similarity loop.
+---
+
+# Multi-agent workflow
+
+Implement a big backlog with one coordinator ("agent A") and several parallel agents. Follow it when you coordinate, and when you are an agent that was briefed with it.
+
+## 0. Ground rules (always)
+
+1. **Backlog.md is the source of truth for tasks.** Run `backlog instructions overview` once per conversation. Read `backlog instructions task-creation`, `task-execution`, `task-finalization` before creating tasks, starting/changing status, or ticking criteria. **Never edit `backlog/*.md` files directly: use the `backlog` CLI (or the backlog MCP tools).** `./scripts/validate-backlog.sh` must pass.
+2. **Do not touch tasks that someone else started or owns**. List them for the coordinator instead.
+3. **Do not ask the user product/design questions** while working a milestone loop. Settle ambiguities yourself (section 3) and log the decision.
+4. **A parent task can only be finished when all its children are Done.** Failing tests, screenshot/design differences, user-reported bugs and similarity gaps become **child subtasks** of the original task (`backlog task create "…" -p ORCH-013.09 -m <milestone> -d … --ac …`). Move an already-Done original back to `In Progress` with a note (`--append-notes`) until its children are Done.
+5. **Every user-facing task gets a happy-path journey** (section 5).
+6. **Report faithfully**: failing tests, skipped steps and unverified claims are stated as such. "Done" needs evidence (spec names, Java tests, pipeline id).
+7. **No review gates before implementation.** A refinement (design note, options, child drafts) never waits for the user's approval: put the open questions to the user once, in one batch with a recommended default each, log the answers as decisions, and send the work straight to a worker. The user reviews **implemented solutions**: when a task or epic is implemented and verified, add the label `needs-review` (`backlog task edit <id> --add-label needs-review`; list with `backlog task list --labels needs-review --plain`) and end the report with that list. Removing the label means reviewed; feedback becomes new tasks or criteria. Hard-to-reverse or outward-facing actions (publishing, deleting, writing to someone else's repository) still need the user's go-ahead.
+
+**Helper scripts**: versioned copies are in `.claude/skills/multi-agent-workflow/scripts/` (`safe-push.sh`, `ci-trigger.sh`, `heavy.sh`, `keep-both.py`). The live copies the agents use are in `/home/orca/.local/state/tcms-ralph/` (also `ci-status.json`, `ci-trigger.log`, `ci-failures.log`, `ralph-queue.md`); in this skill `scripts/x.sh` means that live folder. Keep the two in sync when you change a script.
+
+## 1. Roles
+
+| Role                      | Does                                                                                                                     | Typical model     |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------ | ----------------- |
+| Coordinator (agent A)     | Owns the queue, design decisions, integration pushes, finalization, user communication                                   | the session model |
+| Design consultant         | Read-only agent that reads DECISIONS.md, decision records, tasks and code, and returns numbered decisions + a work split | Opus              |
+| Backend/API worker        | Schema (V10/V11 only), entities, services, controllers, `.http` files, Java tests                                        | Haiku             |
+| Frontend worker           | Screens, components, specs, journeys                                                                                     | Haiku             |
+| Integrations/audit worker | Jira/CI/audit, mocks (fixed ports)                                                                                       | Opus              |
+| Similarity workers        | Design parity per screen shard, measurement                                                                              | Haiku             |
+| CI agent                  | Runs `ci-trigger.sh`, writes failure reports                                                                             | Haiku             |
+
+Spawn agents with the Agent tool. **Brief them like peers**: goal, what is already decided (DECISIONS.md ids), files they own, files they must not edit, verification recipe, push rules, ports, how to report. A brief is the only context they get. Resume an idle agent with SendMessage (a new Agent call loses its context).
+
+## 2. Work loop per task (Ralph-style)
+
+1. Search the backlog (`backlog task search`, `task view <id> --plain`); check remote branches/DECISIONS.md for an existing implementation.
+2. If the design is ambiguous or crosses subsystems, run a **design consult** first (section 3).
+3. Set the task `In Progress` (`backlog task edit <id> -a @agent-x -s "In Progress"`). Implement in the owned files.
+4. Write the specs: unit/integration (Java), Playwright (UI), HTTP request file for new endpoints, a **journey** (UI tasks).
+5. Verify **locally** (section 6). Commit with the task tag: `ORCH-014.05: Add case to plan` and the Co-Authored-By line.
+6. Push (section 7). Immediately start the next task; do not wait for CI.
+7. When a pipeline that contains your commits is green: tick the criteria and DoD with evidence, write the final summary, set `Done` (task-finalization guide). Reword criteria that decisions superseded, with the reason in the notes.
+
+## 3. Decisions (DECISIONS.md)
+
+- Append `**D-nn · task · decider** — decision. *Why:* reason. *Alternatives:* …` at the end of `DECISIONS.md`. Number blocks per agent to avoid collisions (e.g. D-66..D-85 coordinator, D-130+ backend, D-140+ integrations, D-160+ similarity). On a merge conflict in this file keep both sides (`scripts/keep-both.py DECISIONS.md`).
+- **Design consult**: spawn an Opus agent (read-only, "do not edit, do not run servers") with the tasks, existing code and decision records; ask for concrete decisions (data model, endpoints, rules, edge cases), the contradictions between task criteria, and a split into streams with file ownership. Record the answer in DECISIONS.md, then brief workers.
+- Conflicts with team decision records (`backlog/decisions/decision-0xx`) are reconciled in a decision entry (e.g. "DB tables are working state; the commit to the results branch is a later step") and flagged to the owner.
+
+## 4. Splitting work between agents
+
+- One owner per file group; shared files get a single mount line, rebased carefully. Schema (V10/V11) is edited **only** by the agent doing "Step 0", pushed alone, then frozen.
+- Contract first: the backend agent pushes migrations + endpoints + `src/types/*.ts` + `src/utils/*Api.ts` early; the frontend agent builds on them.
+- Stale backend is a classic trap ("Workspace not found" = the running API predates the endpoint): restart your API after pulling backend changes.
+- Each agent has its **own worktree** (`git worktree add …/worktrees/agent-x`), its **own ports** (table in your brief; e.g. API 8120/vite 5220), symlinked `node_modules`, and kills only its own servers **by PID** (never `pkill -f`: it matches the command line of your own shell).
+
+## 5. Journeys (release videos)
+
+`src/test/playwright/journeys/<task>.journey.spec.ts`, helpers `support/journey.ts` (`scene`, `caption`, `tap`, `type`, `hold`, `journeyTimeout`). Each journey is a walkthrough of the happy path; its description goes in `release/videos.md` (heading = describe title + " " + test title). The `release-videos` project runs them; the CI job `vv-release-videos` records them and publishes the release. Open Settings sections with the `openSettings` helper (retrying) and never tap an element right after navigation without waiting for its screen.
+
+## 6. Local verification recipe (before every push)
+
+CI-exact (Java): `./gradlew spotlessApply clean build -x test` then `./gradlew test integrationTest spotlessCheck spotbugsMain check -x spotbugsTest` (JDK: `~/.local/jdk/jdk-21*`). SpotBugs: package-level EI_EXPOSE exclusions in `spotbugs-exclude.xml`. Frontend: `npm run lint` (2 known errors in `vv-settings.spec.ts` may exist), `npm run build`, then Playwright for the area:
+
+```
+API_BASE_URL=http://localhost:<api> BASE_URL=http://localhost:<api> SPA_URL=http://localhost:<vite> SKIP_SERVER=1 \
+  bash scripts/heavy.sh npx playwright test <specs> --project=chromium --workers=2
+```
+
+- **Set all three env vars**: the helpers create workspaces through `API_BASE_URL` (default 8080) while `BASE_URL/SPA_URL` drive the browser; without it, specs create workspaces on someone else's backend.
+- Backend CORS/links for non-default ports: `APP_CORS_ALLOWED_ORIGINS=<spa origin> APP_AUTH_FRONTEND_URL=<spa origin>`.
+- Every spec that creates or deletes data uses a **private workspace** (`support/repos.ts`: `createWorkspace`, `signInTo`, `connectRepository`, `syncRepository`, …). Fixed-port mocks (mock-idp 9101/9102, mock-forge 9103, mock-jira 9104) keep their specs serial.
+- Settings opens on **Members**; specs click the section they need (`goToSettings`).
+- A page reload resets the selected workspace to 1 (ORCH-020 session issue): navigate away and back in tests instead.
+- **Machine load**: the shared 16-core machine collapses under parallel Playwright/Gradle ("Target crashed", 429s). Run every heavy command through `scripts/heavy.sh` (max 2 at a time), `--workers=2`, one Playwright run per agent, stop backend/vite when idle. The e2e test profile raises the login/public rate limits.
+- Disk: delete `test-results`, `release-videos`, `dist`, measurement PNGs after runs; the shared disk filled once.
+
+## 7. Push and CI flow
+
+- **Push every locally verified commit immediately** with `bash scripts/safe-push.sh` (lock, rebase only if behind, `git push -o ci.skip`). Never plain `git push`, never force. The push creates no pipeline.
+- **One CI agent** runs `scripts/ci-trigger.sh` (one instance): every ~3 min, if no pipeline of MR !31 is active and the head is not covered by a **non-skipped** pipeline, it creates one pipeline for the head via the API, writes `ci-status.json` and `ci-failures.log`. **Agents never poll GitLab** (it rate-limits us with 429): read `ci-status.json` (≤ every 5 minutes) and check `git merge-base --is-ancestor <commit> <last_pipeline.sha>` with `last_pipeline.status == success`.
+- A failed pipeline: the CI agent writes `ci-report-<id>.md` (job, tests, classification); the coordinator routes it to the owner. Deterministic failures are bugs even if the report says "flake".
+- Batch integration: when several agents have local commits, the coordinator may merge their branches into one branch, resolve duplicates, run the full checks once, and push once.
+- Backlog-only commits create "skipped" pipelines; they do not count as verification.
+
+## 8. Finalization
+
+1. Pipeline green and contains the commits (see above).
+2. Per task, with the CLI: reword criteria superseded by decisions (`--acceptance-criteria` with the full list keeps checks for unchanged text), `--check-ac N`, `--check-dod N` (DoD items: unit, integration, spotless/spotbugs, HTTP files, Playwright specs, status, pipeline), `--append-notes` with the evidence, `--final-summary`, `-s Done`.
+3. Parents last, only when every child reads Done. Re-run `./scripts/validate-backlog.sh`.
+4. Do not claim evidence for code that is not in a green pipeline (reopen the task instead).
+
+## 9. Failing tests and bug reports → subtasks
+
+For a failing spec or a user-reported bug: open the screenshot/error context, describe what is on screen vs expected, classify (spec out of date / real regression / environment-port / load flake: flakes get no subtask), find the original task, create the child with the difference as description and "the test passes + the difference is gone" as criteria, reopen the original, fix, mark the child Done with evidence.
+
+## 10. Design-similarity loop
+
+Goal: every screen ≥ 95% overall (pixel + typography + layout, fonts included, **data excluded**) measured by `scripts/visual-similarity.mjs` on a seeded workspace (real API seed: repositories, plan, runs, CI results; documented). Workers claim an unassigned open similarity child of their screen shard (`backlog task edit <id> -a @agent-x -s "In Progress"`), copy the design's actual CSS/DOM values (`src/styles/modernist.css` stays a verbatim design copy; `style-sync.spec.ts` enforces it), keep every `data-tid`, re-measure through `heavy.sh`, close the child with the measured evidence. Measurement changes must be principled and logged (data rows/list rows/chart bars are masked identically on both sides; never tune seed values to the design). Findings are written back into the child tasks' notes so any worker can pick them up cold.
+
+## 11. Coordinator checklist
+
+- Keep a queue file (priorities, owners, ports) and update it after each batch.
+- One message per agent per instruction; confirm what is idle; give idle agents real work (verification, specs, finalization prep).
+- Watch machine load and disk; kill stray pollers by PID; tell all agents when rules change.
+- Never leave a claim in the backlog that the code does not back.
