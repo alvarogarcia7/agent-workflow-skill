@@ -11,5 +11,6 @@
 - Test suite with a fake `glab`.
 
 ## Unreleased
+- Rule: no review gates before implementation; the user reviews implemented solutions through the `needs-review` label (SKILL.md section 0 rule 3, intake in the phase pipeline, Phase 4).
 - Rule: every request becomes a backlog task first (SKILL.md section 0, intake in the phase pipeline); lessons from long CI runs (base URLs, JUnit reports, publish retry loop, scoped CI tokens).
 - Four phase skills and `MULTI_AGENT_DEV_SKILL.md`; `mailbox.sh`, `ralph-loop.sh`, `insert-fix.sh`.
