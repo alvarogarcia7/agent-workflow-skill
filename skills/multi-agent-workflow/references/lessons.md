@@ -55,5 +55,14 @@ Feature requests, bug reports and feedback are logged in the backlog **before** 
 - **Rename jobs with care.** Job names are used by status scripts, docs and finalization notes; rename, update the docs and expect old pipelines to keep the old names.
 - **A failed pipeline after a rename or journey change** is usually a spec reading removed UI or a stale build: rebuild the jar the e2e run uses after pulling backend changes before concluding a regression.
 - **Shell traps.** zsh does not word-split `$var`; run test loops with `bash -c`. Never use `pkill -f`/`pgrep -f` (they match your own shell); keep PIDs.
-- **Dirty main checkout.** If the coordinator's checkout holds the user's uncommitted edits, push coordinator commits from a separate worktree (cherry-pick, then `git reset --keep origin/<branch>` in the main checkout).
+- **Dirty main checkout.** If the main checkout holds the user's uncommitted edits, never `git reset --hard`, `git checkout -- <file>` or stash there. Make backlog and other coordinator commits from a separate coordinator worktree (own branch from `origin/<branch>`) and push from it with `safe-push.sh`; the main checkout is updated by the user, or with `git pull --rebase` only when the touched files are clean.
 
+## Completion detection: fallback polling schedule
+When something you triggered (a pipeline, a document-generation job, a deployment) must be waited for, prefer a **webhook** from the forge as the primary signal: it only wakes the waiter for one status check. Where a webhook is not available or not configured, long-poll with a schedule that does not hammer the API:
+1. Wait for the job to start (status `running`); do not poll before that more often than the CI loop does.
+2. Record the duration of the **last 5** comparable runs. After the start, sleep their **average + 20 s** and check once.
+3. If still running, check **every 60 s**, until a hard timeout (configurable, with a final check at the timeout).
+4. Log the chosen schedule as a decision (id in the decision log) and read the status file the CI loop maintains instead of calling the API yourself where one exists.
+
+## Review list at the repository root
+Besides the `needs-review` label, keep `NEEDS_REVIEW.md` (template `templates/NEEDS_REVIEW.md`): one table row per implemented and verified task (task, what, where to look or how to run it, decisions). The agent that finishes a task adds its row in the same commit as the label; removing the label and the row means reviewed. The coordinator's final report points to the file instead of repeating it.

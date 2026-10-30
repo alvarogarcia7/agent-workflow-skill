@@ -14,7 +14,7 @@ It is project-independent. Project specifics (verification commands, ports, test
 skills/multi-agent-workflow/
   SKILL.md        the playbook
   references/     ci-gitlab.md, ci-github.md, parity-loop.md, lessons.md
-  templates/      WORKFLOW.md, agent-brief, handover, design-consult-brief, ci-report, decision-entry, queue, finalize.sh
+  templates/      WORKFLOW.md, NEEDS_REVIEW.md, agent-brief, handover, design-consult-brief, ci-report, decision-entry, queue, finalize.sh
   scripts/        lib.sh, safe-push.sh, ci-trigger.sh (GitLab), heavy.sh, keep-both.py, env.example
 tests/            run.sh and a fake glab (fixture driven)
 ```
