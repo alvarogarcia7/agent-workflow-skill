@@ -16,6 +16,9 @@ skills/multi-agent-workflow/
   references/     ci-gitlab.md, ci-github.md, parity-loop.md, lessons.md
   templates/      WORKFLOW.md, NEEDS_REVIEW.md, agent-brief, handover, design-consult-brief, ci-report, decision-entry, queue, finalize.sh
   scripts/        lib.sh, safe-push.sh, ci-trigger.sh (GitLab), heavy.sh, keep-both.py, env.example
+skills/mr-pipeline-merge/
+  SKILL.md        ship one branch through a PR/MR: push, wait for CI, approval gate, merge locally, push, delete branch
+  references/     forges.md (GitLab, GitHub, Gitea/Forgejo commands and status tables)
 tests/            run.sh and a fake glab (fixture driven)
 ```
 
@@ -47,6 +50,17 @@ GitLab only out of the box. On GitHub Actions: (1) set `on:` to `workflow_dispat
 Extracted from a real multi-agent run (a full-stack web app, ~100 backlog tasks, six parallel agents).
 License: to be chosen by the repository owner. Add a `LICENSE` before publishing.
 
+
+## Shipping one branch: mr-pipeline-merge
+
+`skills/mr-pipeline-merge` ships a single local branch to `main` through a pull/merge request on whatever forge the
+git remote points at: GitLab, GitHub (github.com or Enterprise), Gitea or Forgejo, detected from `git remote get-url`
+(override with `FORGE=gitlab|github|gitea`). It rebases and pushes with a lease, opens or finds the request, waits for
+the pipeline of the pushed commit on a schedule seeded from a per-repo cache of past pipeline durations
+(`.mr-pipeline-timing.json`, git-ignore it), reports, and only after an explicit user approval merges **locally**
+(ff-only, merge commit or squash) with the identity listed in `.commit-policy`, pushes `main`, and deletes the remote
+branch with `--force-with-lease` on the reviewed SHA. It never merges through the forge. Per-forge commands and status
+tables are in `references/forges.md`; it needs the forge CLI (`glab`, `gh` or `tea`) logged in to the remote's host.
 
 ## Phase pipeline
 

@@ -11,6 +11,7 @@
 - Test suite with a fake `glab`.
 
 ## Unreleased
+- New skill `mr-pipeline-merge`: ship one branch through a PR/MR on GitLab, GitHub or Gitea/Forgejo (forge detected from the git remote), wait for the commit's pipeline on a cached schedule, explicit approval gate, local merge (ff-only, merge commit, squash) with the `.commit-policy` identity, remote branch deletion leased on the reviewed SHA. Per-forge commands in `references/forges.md`.
 - `NEEDS_REVIEW.md` convention next to the `needs-review` label (SKILL.md rule 3, intake and Phase 4 in `MULTI_AGENT_DEV_SKILL.md`, `templates/NEEDS_REVIEW.md`); lessons: completion detection fallback polling schedule, dirty main checkout (backlog commits from a coordinator worktree, never `reset --hard`).
 - Rule: no review gates before implementation; the user reviews implemented solutions through the `needs-review` label (SKILL.md section 0 rule 3, intake in the phase pipeline, Phase 4).
 - Rule: every request becomes a backlog task first (SKILL.md section 0, intake in the phase pipeline); lessons from long CI runs (base URLs, JUnit reports, publish retry loop, scoped CI tokens).
